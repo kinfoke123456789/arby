@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, Square, Search, Zap, DollarSign, TrendingUp, Activity } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Play, Square, Search, Zap, DollarSign, TrendingUp, Activity, Bot, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 
 interface ArbitrageOpportunity {
   id: string;
@@ -21,9 +23,17 @@ interface ScannerStats {
   activeScans: number;
   totalProfit: number;
   successRate: number;
+  executedTrades: number;
 }
 
-export const ArbitrageScanner = () => {
+interface AutoExecutionProps {
+  autoExecute: boolean;
+  walletConnected: boolean;
+  onExecute: (opportunity: ArbitrageOpportunity) => void;
+}
+
+export const ArbitrageScanner = ({ autoExecute = false, walletConnected = false, onExecute }: Partial<AutoExecutionProps> = {}) => {
+  const { toast } = useToast();
   const [isScanning, setIsScanning] = useState(false);
   const [minProfit, setMinProfit] = useState(0.3);
   const [opportunities, setOpportunities] = useState<ArbitrageOpportunity[]>([]);
@@ -31,7 +41,8 @@ export const ArbitrageScanner = () => {
     totalOpportunities: 0,
     activeScans: 0,
     totalProfit: 0,
-    successRate: 0
+    successRate: 0,
+    executedTrades: 0
   });
 
   const profitThresholds = [0.1, 0.3, 0.5, 1.0];
@@ -55,6 +66,25 @@ export const ArbitrageScanner = () => {
     };
   }, [minProfit]);
 
+  // Auto-execution effect
+  useEffect(() => {
+    if (autoExecute && walletConnected && opportunities.length > 0) {
+      const profitable = opportunities.filter(opp => 
+        opp.profit >= minProfit && 
+        opp.status === "active"
+      );
+      
+      if (profitable.length > 0) {
+        const bestOpportunity = profitable.sort((a, b) => b.profit - a.profit)[0];
+        
+        // Auto-execute best opportunity
+        setTimeout(() => {
+          handleExecuteOpportunity(bestOpportunity);
+        }, 1000);
+      }
+    }
+  }, [opportunities, autoExecute, walletConnected, minProfit]);
+
   useEffect(() => {
     if (isScanning) {
       const interval = setInterval(() => {
@@ -77,6 +107,37 @@ export const ArbitrageScanner = () => {
       return () => clearInterval(interval);
     }
   }, [isScanning, generateMockOpportunity, opportunities.length]);
+
+  const handleExecuteOpportunity = useCallback((opportunity: ArbitrageOpportunity) => {
+    if (!walletConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to execute trades",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Remove executed opportunity from list
+    setOpportunities(prev => prev.filter(opp => opp.id !== opportunity.id));
+    
+    // Update stats
+    setStats(prev => ({
+      ...prev,
+      executedTrades: prev.executedTrades + 1,
+      successRate: ((prev.executedTrades + 1) / prev.totalOpportunities) * 100
+    }));
+
+    // Call external execution handler if provided
+    if (onExecute) {
+      onExecute(opportunity);
+    }
+
+    toast({
+      title: "Executing Arbitrage",
+      description: `Executing ${opportunity.coin} trade via flash loan...`,
+    });
+  }, [walletConnected, onExecute, toast]);
 
   const handleStart = () => {
     setIsScanning(true);
@@ -240,12 +301,13 @@ export const ArbitrageScanner = () => {
                     <th className="text-right p-4 font-medium text-muted-foreground">Profit %</th>
                     <th className="text-center p-4 font-medium text-muted-foreground">Flash Loan</th>
                     <th className="text-center p-4 font-medium text-muted-foreground">Status</th>
+                    <th className="text-center p-4 font-medium text-muted-foreground">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {opportunities.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center p-8 text-muted-foreground">
+                      <td colSpan={7} className="text-center p-8 text-muted-foreground">
                         {isScanning ? "Scanning for opportunities..." : "No opportunities found. Start scanning to begin."}
                       </td>
                     </tr>
@@ -277,6 +339,18 @@ export const ArbitrageScanner = () => {
                         </td>
                         <td className="p-4 text-center">
                           {getStatusBadge(opportunity.status)}
+                        </td>
+                        <td className="p-4 text-center">
+                          <Button
+                            onClick={() => handleExecuteOpportunity(opportunity)}
+                            disabled={!walletConnected || opportunity.status !== "active"}
+                            variant={opportunity.status === "active" ? "success" : "outline"}
+                            size="sm"
+                            className="h-8 px-3"
+                          >
+                            <Target className="h-3 w-3 mr-1" />
+                            Execute
+                          </Button>
                         </td>
                       </tr>
                     ))
